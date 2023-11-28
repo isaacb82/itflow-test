@@ -11,51 +11,40 @@
     IFNULL(SUM(invoices.invoice_amount), 0) - IFNULL(SUM(payments.payment_amount), 0) AS balance,
     contacts.contact_phone AS billing_contact_phone,
     IFNULL(recurring_totals.recurring_monthly_total, 0) AS recurring_monthly_total,
-    (IFNULL(SUM(invoices.invoice_amount), 0) - IFNULL(SUM(payments.payment_amount), 0) - IFNULL(recurring_totals.recurring_monthly_total, 0)) AS behind_amount,
-    CASE
-        WHEN IFNULL(recurring_totals.recurring_monthly_total, 0) > 0 THEN
-            (IFNULL(SUM(invoices.invoice_amount), 0) - IFNULL(SUM(payments.payment_amount), 0) - IFNULL(recurring_totals.recurring_monthly_total, 0)) / recurring_totals.recurring_monthly_total
+    SUM(CASE
+        WHEN invoices.invoice_due < CURDATE() - INTERVAL 2 MONTH THEN
+            IFNULL(invoices.invoice_amount, 0) - IFNULL(payments.payment_amount, 0)
         ELSE
             0
-    END AS months_behind
-    FROM 
-        clients
-    LEFT JOIN
-        invoices
-    ON 
-        clients.client_id = invoices.invoice_client_id 
-        AND invoices.invoice_status NOT LIKE 'Draft' 
-        AND invoices.invoice_status NOT LIKE 'Cancelled'
-    LEFT JOIN
-        (SELECT 
-            payment_invoice_id, 
-            SUM(payment_amount) as payment_amount 
-        FROM payments 
-        GROUP BY payment_invoice_id) as payments
-    ON
-        invoices.invoice_id = payments.payment_invoice_id
-    LEFT JOIN
-        contacts
-    ON
-        clients.client_id = contacts.contact_client_id AND contacts.contact_billing = 1
-    LEFT JOIN
-        (SELECT 
-            recurring_client_id,
-            SUM(recurring_amount) AS recurring_monthly_total 
-        FROM recurring 
-        WHERE recurring_status = 1 AND recurring_frequency = 'month'
-        GROUP BY recurring_client_id) as recurring_totals
-    ON
-        clients.client_id = recurring_totals.recurring_client_id
-    GROUP BY
-        clients.client_id,
-        clients.client_name,
-        contacts.contact_phone,
-        recurring_totals.recurring_monthly_total
-    HAVING 
-        balance > 0 AND months_behind >= 2
-    ORDER BY
-        months_behind DESC;";
+    END) AS behind_amount
+FROM 
+    clients
+LEFT JOIN
+    invoices ON clients.client_id = invoices.invoice_client_id 
+    AND invoices.invoice_status NOT LIKE 'Draft' 
+    AND invoices.invoice_status NOT LIKE 'Cancelled'
+LEFT JOIN
+    (SELECT 
+        payment_invoice_id, 
+        SUM(payment_amount) as payment_amount 
+     FROM payments 
+     GROUP BY payment_invoice_id) as payments ON invoices.invoice_id = payments.payment_invoice_id
+LEFT JOIN
+    contacts ON clients.client_id = contacts.contact_client_id AND contacts.contact_billing = 1
+LEFT JOIN
+    (SELECT 
+        recurring_client_id,
+        SUM(recurring_amount) AS recurring_monthly_total 
+     FROM recurring 
+     WHERE recurring_status = 1 AND recurring_frequency = 'month'
+     GROUP BY recurring_client_id) as recurring_totals ON clients.client_id = recurring_totals.recurring_client_id
+GROUP BY
+    clients.client_id,
+    clients.client_name,
+    contacts.contact_phone,
+    recurring_totals.recurring_monthly_total
+HAVING 
+    balance > 0;";
     $result_client_balance_report = mysqli_query($mysqli, $sql_client_balance_report);
 
     //get currency format from settings
